@@ -161,3 +161,25 @@ This is **not mandatory** but **highly valued** as it demonstrates your ability 
 ---
 
 Good luck, and happy coding!
+
+---
+
+## Included implementation
+
+The solution uses Python 3.10+ and the standard library, with no third-party
+dependencies. From this directory, extract the dataset if necessary and run:
+
+```powershell
+python -m zipfile -e ad_data.csv.zip .
+python aggregator.py --input ad_data.csv --output results
+python -m unittest discover -s tests -v
+```
+
+The archive uses Git LFS; run `git lfs pull` first if the archive contents have
+not been downloaded. See [SOLUTION.md](SOLUTION.md) for setup details, validation
+and rounding policies, complexity, sample results, and measured full-dataset
+processing time and memory. The two output reports are in [results/](results/).
+
+Measured on the supplied 1,043,304,870-byte dataset: **26,843,544 records**, **50
+campaigns**, **104.581 seconds**, and **24.30 MiB peak working set** (Windows 11,
+Python 3.15.2 64-bit). See the [benchmark log](benchmark-full.txt).

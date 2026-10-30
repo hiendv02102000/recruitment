@@ -4,6 +4,20 @@ This repository contains recruitment materials and technical challenges for vari
 
 Each subdirectory contains specific challenges and resources for different roles. Please refer to the README.md file in each subdirectory for detailed information.
 
+## Development Workflow
+
+Follow the reusable [development workflow](docs/WORKFLOW.md):
+**Brainstorm → Plan → Implement → Code review → Test → Human test**.
+Use the [task template](docs/templates/TASK.md) to record decisions, progress,
+review findings, and test results. Repository instructions are in
+[AGENTS.md](AGENTS.md).
+
+Reusable project skills are in [`.agents/skills/`](.agents/skills/).
+Use `$project-workflow` for the full process or choose an individual step
+from the [skill guide](docs/WORKFLOW.md#using-skills).
+
+Original user prompts are recorded verbatim in [PROMPTS.md](PROMPTS.md).
+
 ---
 
 ## 📁 Repository Structure

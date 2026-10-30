@@ -1,0 +1,9 @@
+﻿Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input ad_data.csv --output results
+Processed 26,843,544 records across 50 campaigns.
+Wrote results\top10_ctr.csv
+Wrote results\top10_cpa.csv
+Processing time: 104.58 seconds
+CLI wall time: 104.581 seconds
+Peak working set: 25,477,120 bytes (24.30 MiB)
