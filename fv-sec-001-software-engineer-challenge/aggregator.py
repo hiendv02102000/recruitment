@@ -1,12 +1,18 @@
 """Stream advertising records into exact per-campaign totals and ranked CSVs."""
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 import csv
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, DecimalException, Inexact, localcontext
 from fractions import Fraction
+from functools import lru_cache
 from heapq import nsmallest
+from itertools import repeat
+import multiprocessing
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -21,6 +27,10 @@ OUTPUT_COLUMNS = (
     "total_conversions", "CTR", "CPA",
 )
 REPORT_NAMES = ("top10_ctr.csv", "top10_cpa.csv")
+# Smaller inputs are not worth the worker start-up cost.
+PARALLEL_MIN_BYTES = 64 * 1024 * 1024
+BLOCK_BYTES = 1024 * 1024
+MAX_LINE_BYTES = 1024 * 1024
 DECIMAL_TEXT = re.compile(
     r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z"
 )
@@ -41,10 +51,22 @@ class Aggregation:
 
 
 def nonnegative_integer(value: str, column: str) -> int:
-    value = value.strip()
+    """Parse a count while accepting surrounding whitespace."""
+    return _nonnegative_integer(value.strip(), column)
+
+
+def _nonnegative_integer(value: str, column: str) -> int:
+    """Parse a count whose surrounding whitespace has already been stripped."""
     if not value or not value.isascii() or not value.isdecimal():
         raise ValueError(f"{column} must be a nonnegative integer")
     return int(value)
+
+
+@lru_cache(maxsize=4096)
+def validate_date(value: str) -> None:
+    """Cache successful, canonical calendar-date validations only."""
+    if date.fromisoformat(value).isoformat() != value:
+        raise ValueError
 
 
 def decimal_spend(value: str) -> Decimal:
@@ -59,66 +81,198 @@ def decimal_spend(value: str) -> Decimal:
     return spend
 
 
-def aggregate(input_path: Path) -> Aggregation:
-    """Read once, retaining only totals for each distinct campaign."""
-    result = Aggregation()
-    with input_path.open(encoding="utf-8-sig", newline="") as source:
-        reader = csv.reader(source, strict=True)
-        with localcontext() as context:
-            # Grow precision only when needed, rather than silently rounding sums.
-            context.traps[Inexact] = True
-            try:
-                header = next(reader, None)
-                if header is None:
-                    raise ValueError("empty file: expected a CSV header")
-                if len(header) != len(INPUT_COLUMNS) or set(header) != set(INPUT_COLUMNS):
-                    raise ValueError(
-                        "expected exactly these CSV columns, once each: "
-                        + ", ".join(INPUT_COLUMNS)
-                    )
-                indexes = [header.index(column) for column in INPUT_COLUMNS]
-                for row in reader:
-                    if not row:
-                        continue
-                    if len(row) != len(header):
-                        raise ValueError(f"expected {len(header)} fields, got {len(row)}")
-                    campaign_id, day, raw_impressions, raw_clicks, raw_spend, raw_conversions = (
-                        row[index].strip() for index in indexes
-                    )
-                    if not campaign_id:
-                        raise ValueError("campaign_id must not be empty")
-                    try:
-                        if date.fromisoformat(day).isoformat() != day:
-                            raise ValueError
-                    except ValueError:
-                        raise ValueError("date must be a valid YYYY-MM-DD calendar date") from None
-                    impressions = nonnegative_integer(raw_impressions, "impressions")
-                    clicks = nonnegative_integer(raw_clicks, "clicks")
-                    spend = decimal_spend(raw_spend)
-                    conversions = nonnegative_integer(raw_conversions, "conversions")
+def add_spend(context, total: Decimal, spend: Decimal) -> Decimal:
+    """Add exactly, growing precision only when needed rather than rounding."""
+    try:
+        return total + spend
+    except Inexact:
+        context.prec = (
+            max(total.adjusted(), spend.adjusted())
+            - min(total.as_tuple().exponent, spend.as_tuple().exponent)
+            + 2
+        )
+        return total + spend
 
-                    totals = result.campaigns.get(campaign_id)
-                    if totals is None:
-                        totals = result.campaigns[campaign_id] = CampaignTotals()
-                    try:
-                        new_spend = totals.spend + spend
-                    except Inexact:
-                        context.prec = (
-                            max(totals.spend.adjusted(), spend.adjusted())
-                            - min(totals.spend.as_tuple().exponent, spend.as_tuple().exponent)
-                            + 2
-                        )
-                        new_spend = totals.spend + spend
-                    totals.impressions += impressions
-                    totals.clicks += clicks
-                    totals.spend = new_spend
-                    totals.conversions += conversions
-                    result.row_count += 1
-            except (ValueError, csv.Error, UnicodeError, DecimalException) as error:
-                raise ValueError(
-                    f"{input_path}: line {max(reader.line_num, 1)}: {error}"
-                ) from error
+
+def column_indexes(line: str) -> list[int]:
+    """Validate a header line and return the position of each input column."""
+    if '"' in line:
+        raise ValueError("quoted CSV fields are not supported")
+    header = line.rstrip("\r\n").split(",")
+    if len(header) != len(INPUT_COLUMNS) or set(header) != set(INPUT_COLUMNS):
+        raise ValueError(
+            "expected exactly these CSV columns, once each: " + ", ".join(INPUT_COLUMNS)
+        )
+    return [header.index(column) for column in INPUT_COLUMNS]
+
+
+def accumulate(lines, first_line: int, indexes: list[int],
+               campaigns: dict[str, CampaignTotals], context) -> int:
+    """Add each record to campaigns and return the record count.
+
+    Plain comma splitting is faster than csv.reader but cannot parse quoting,
+    so quoted fields are rejected rather than silently split apart.
+    """
+    row_count = 0
+    line_number = first_line
+    try:
+        for line_number, line in enumerate(lines, first_line):
+            if '"' in line:
+                raise ValueError("quoted CSV fields are not supported")
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            row = line.split(",")
+            if len(row) != len(INPUT_COLUMNS):
+                raise ValueError(f"expected {len(INPUT_COLUMNS)} fields, got {len(row)}")
+            campaign_id, day, raw_impressions, raw_clicks, raw_spend, raw_conversions = [
+                row[index].strip() for index in indexes
+            ]
+            if not campaign_id:
+                raise ValueError("campaign_id must not be empty")
+            try:
+                validate_date(day)
+            except ValueError:
+                raise ValueError("date must be a valid YYYY-MM-DD calendar date") from None
+            impressions = _nonnegative_integer(raw_impressions, "impressions")
+            clicks = _nonnegative_integer(raw_clicks, "clicks")
+            spend = decimal_spend(raw_spend)
+            conversions = _nonnegative_integer(raw_conversions, "conversions")
+
+            totals = campaigns.get(campaign_id)
+            if totals is None:
+                totals = campaigns[campaign_id] = CampaignTotals()
+            new_spend = add_spend(context, totals.spend, spend)
+            totals.impressions += impressions
+            totals.clicks += clicks
+            totals.spend = new_spend
+            totals.conversions += conversions
+            row_count += 1
+    except (ValueError, UnicodeError, DecimalException) as error:
+        raise ValueError(f"line {line_number}: {error}") from error
+    return row_count
+
+
+def aggregate(input_path: Path, workers: int | None = None) -> Aggregation:
+    """Read once, retaining only totals for each distinct campaign.
+
+    Large inputs are split into byte ranges aggregated by worker processes.
+    Anything the parallel path cannot handle identically falls back to the
+    sequential path, which also produces the authoritative error message.
+    """
+    if workers is None:
+        # os.process_cpu_count respects CPU affinity but needs Python 3.13.
+        workers = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+    try:
+        size = input_path.stat().st_size
+    except OSError:
+        size = 0  # Let the sequential open report the error.
+    if workers > 1 and size >= PARALLEL_MIN_BYTES:
+        result = _aggregate_parallel(input_path, workers)
+        if result is not None:
+            return result
+    return _aggregate_sequential(input_path)
+
+
+def _aggregate_sequential(input_path: Path) -> Aggregation:
+    result = Aggregation()
+    with input_path.open(encoding="utf-8-sig") as source, localcontext() as context:
+        context.traps[Inexact] = True
+        try:
+            line = source.readline()
+            if not line:
+                raise ValueError("empty file: expected a CSV header")
+            indexes = column_indexes(line)
+        except (ValueError, UnicodeError) as error:
+            raise ValueError(f"{input_path}: line 1: {error}") from error
+        try:
+            result.row_count = accumulate(source, 2, indexes, result.campaigns, context)
+        except ValueError as error:
+            raise ValueError(f"{input_path}: {error}") from error
     return result
+
+
+def _aggregate_parallel(input_path: Path, workers: int) -> Aggregation | None:
+    """Aggregate newline-aligned byte ranges; None means use the sequential path."""
+    with input_path.open("rb") as source:
+        header = source.readline(MAX_LINE_BYTES)
+        if not header.endswith(b"\n") or b"\r" in header.rstrip(b"\r\n"):
+            return None
+        try:
+            indexes = column_indexes(header.decode("utf-8-sig"))
+        except ValueError:
+            return None
+        bounds = [source.tell()]
+        size = source.seek(0, os.SEEK_END)
+        for part in range(1, workers):
+            source.seek(max(bounds[0] + (size - bounds[0]) * part // workers, bounds[-1]))
+            line = source.readline(MAX_LINE_BYTES)
+            if line and not line.endswith(b"\n"):
+                return None
+            bounds.append(source.tell())
+        bounds.append(size)
+    ranges = [(start, end) for start, end in zip(bounds, bounds[1:]) if start < end]
+    if not ranges:
+        return None
+    # Workers share no mutable state: each opens its own file handle and owns its
+    # totals, which this thread merges only after every worker has finished.
+    # Forking a multithreaded caller can deadlock, so never use "fork".
+    methods = multiprocessing.get_all_start_methods()
+    mp_context = multiprocessing.get_context("forkserver" if "forkserver" in methods else "spawn")
+    try:
+        with ProcessPoolExecutor(len(ranges), mp_context=mp_context) as pool:
+            parts = list(pool.map(
+                _aggregate_range, repeat(input_path), *zip(*ranges), repeat(indexes)
+            ))
+    except (ValueError, BrokenProcessPool):
+        return None
+    result = Aggregation()
+    with localcontext() as context:
+        context.traps[Inexact] = True
+        for campaigns, row_count in parts:
+            result.row_count += row_count
+            for campaign_id, part in campaigns.items():
+                totals = result.campaigns.get(campaign_id)
+                if totals is None:
+                    result.campaigns[campaign_id] = part
+                    continue
+                totals.impressions += part.impressions
+                totals.clicks += part.clicks
+                totals.spend = add_spend(context, totals.spend, part.spend)
+                totals.conversions += part.conversions
+    return result
+
+
+def _aggregate_range(input_path: Path, start: int, end: int,
+                     indexes: list[int]) -> tuple[dict[str, CampaignTotals], int]:
+    """Worker: aggregate the complete lines in [start, end) in bounded blocks.
+
+    Raises ValueError for anything the sequential path might treat differently.
+    """
+    campaigns: dict[str, CampaignTotals] = {}
+    row_count = 0
+    with input_path.open("rb") as source, localcontext() as context:
+        context.traps[Inexact] = True
+        source.seek(start)
+        remaining = end - start
+        pending = b""
+        while remaining:
+            block = source.read(min(BLOCK_BYTES, remaining))
+            if not block:
+                raise ValueError("input changed while reading")
+            remaining -= len(block)
+            data = pending + block
+            # Keep a trailing partial line, even one spanning several blocks.
+            cut = len(data) if not remaining else data.rfind(b"\n") + 1
+            data, pending = data[:cut], data[cut:]
+            text = data.decode("utf-8")
+            if "\r" in text:
+                # Bare carriage returns are line breaks for the sequential reader.
+                text = text.replace("\r\n", "\n")
+                if "\r" in text:
+                    raise ValueError("bare carriage return")
+            row_count += accumulate(text.split("\n"), 1, indexes, campaigns, context)
+    return campaigns, row_count
 
 
 def ctr(totals: CampaignTotals) -> Fraction:

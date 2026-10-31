@@ -1,0 +1,76 @@
+﻿Input: 1,043,304,870 bytes; baseline: 850dee4
+baseline normalized source SHA-256: 02b8b1b1ce681bdfb04d7eebdd307ddf44dab3e9da2cb36fbdcd5de9edb9ad3c
+optimized normalized source SHA-256: 95dd15b48dc7b7ebc638f7aca7e0ff532666081b7a770824429254cb14075c0d
+START 1/6: baseline
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-1
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-1\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-1\top10_cpa.csv
+Processing time: 110.68 seconds
+CLI wall time: 110.686 seconds
+Peak working set: 25,944,064 bytes (24.74 MiB)
+PASS 1/6: baseline reports match both baseline hashes
+START 2/6: optimized
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-2
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-2\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-2\top10_cpa.csv
+Processing time: 81.33 seconds
+CLI wall time: 81.336 seconds
+Peak working set: 26,132,480 bytes (24.92 MiB)
+PASS 2/6: optimized reports match both baseline hashes
+START 3/6: optimized
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-3
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-3\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-3\top10_cpa.csv
+Processing time: 81.42 seconds
+CLI wall time: 81.421 seconds
+Peak working set: 25,825,280 bytes (24.63 MiB)
+PASS 3/6: optimized reports match both baseline hashes
+START 4/6: baseline
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-4
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-4\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-4\top10_cpa.csv
+Processing time: 113.08 seconds
+CLI wall time: 113.077 seconds
+Peak working set: 25,759,744 bytes (24.57 MiB)
+PASS 4/6: baseline reports match both baseline hashes
+START 5/6: baseline
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-5
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-5\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-5\top10_cpa.csv
+Processing time: 113.15 seconds
+CLI wall time: 113.155 seconds
+Peak working set: 25,849,856 bytes (24.65 MiB)
+PASS 5/6: baseline reports match both baseline hashes
+START 6/6: optimized
+Python: 3.15.2 (64bit)
+Platform: Windows-11-10.0.26300-SP0
+Command: python benchmark.py --input C:\Users\dovan\recruitment\fv-sec-001-software-engineer-challenge\ad_data.csv --output C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-6
+Processed 26,843,544 records across 50 campaigns.
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-6\top10_ctr.csv
+Wrote C:\Users\dovan\AppData\Local\Temp\aggregator-comparison-8maqiahd\output-6\top10_cpa.csv
+Processing time: 79.90 seconds
+CLI wall time: 79.899 seconds
+Peak working set: 25,985,024 bytes (24.78 MiB)
+PASS 6/6: optimized reports match both baseline hashes
+BASELINE seconds: [110.686, 113.077, 113.155]; median: 113.077
+OPTIMIZED seconds: [81.336, 81.421, 79.899]; median: 81.336
+BASELINE peak bytes: [25944064, 25759744, 25849856]; median: 25,849,856
+OPTIMIZED peak bytes: [26132480, 25825280, 25985024]; median: 25,985,024
+MEDIAN latency reduction: 28.07%; peak memory change: 0.52%
+PROPOSED GATE: PASS
+Temporary source snapshots and reports cleaned.

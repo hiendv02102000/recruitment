@@ -1,8 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
 import csv
+from datetime import date, timedelta
 from decimal import Decimal, localcontext
 from fractions import Fraction
-import io
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -68,6 +70,48 @@ class AggregatorTests(unittest.TestCase):
         )
         self.assertEqual(result.row_count, 1)
         self.assertEqual(result.campaigns["A"], aggregator.CampaignTotals(100, 10, Decimal("1.25"), 2))
+
+    def test_integer_helper_preserves_surrounding_whitespace_behavior(self):
+        self.assertEqual(aggregator.nonnegative_integer("  27  ", "clicks"), 27)
+        for value in ["-1", "1.5", "1_000", "１００", " "]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "clicks"):
+                aggregator.nonnegative_integer(value, "clicks")
+
+    def test_date_cache_reuses_valid_dates_and_rejects_invalid_dates_each_time(self):
+        aggregator.validate_date.cache_clear()
+        self.addCleanup(aggregator.validate_date.cache_clear)
+        result = self.parse(HEADER + VALID_ROW + VALID_ROW)
+        self.assertEqual(result.row_count, 2)
+        self.assertEqual(aggregator.validate_date.cache_info().hits, 1)
+        self.assertEqual(aggregator.validate_date.cache_info().currsize, 1)
+        for invalid_day in ["2025-02-29", "20250101"]:
+            invalid = HEADER + VALID_ROW + f"A,{invalid_day},100,10,1.25,2\n"
+            for _ in range(2):
+                with self.subTest(day=invalid_day), self.assertRaisesRegex(ValueError, "line 3:.*date"):
+                    self.parse(invalid)
+        self.assertEqual(aggregator.validate_date.cache_info().currsize, 1)
+
+    def test_date_cache_is_bounded_across_repeated_aggregations(self):
+        aggregator.validate_date.cache_clear()
+        self.addCleanup(aggregator.validate_date.cache_clear)
+        start = date(2000, 1, 1)
+        rows = [f"A,{(start + timedelta(days=index)).isoformat()},1,1,1,1\n" for index in range(4100)]
+        self.assertEqual(self.parse(HEADER + "".join(rows)).row_count, 4100)
+        self.assertEqual(aggregator.validate_date.cache_info().maxsize, 4096)
+        self.assertLessEqual(aggregator.validate_date.cache_info().currsize, 4096)
+        self.assertEqual(self.parse(HEADER + VALID_ROW).row_count, 1)
+        self.assertLessEqual(aggregator.validate_date.cache_info().currsize, 4096)
+
+    def test_cached_dates_do_not_change_error_path_or_line_across_files(self):
+        aggregator.validate_date.cache_clear()
+        self.addCleanup(aggregator.validate_date.cache_clear)
+        self.parse(HEADER + VALID_ROW)
+        other = self.directory / "other.csv"
+        other.write_text(HEADER + VALID_ROW + "A,2025-02-29,1,1,1,1\n", encoding="utf-8")
+        with self.assertRaises(ValueError) as raised:
+            aggregator.aggregate(other)
+        self.assertIn(str(other), str(raised.exception))
+        self.assertIn("line 3: date must be a valid YYYY-MM-DD calendar date", str(raised.exception))
 
     def test_zero_denominators_and_no_eligible_cpa(self):
         result = self.parse(HEADER + "ZERO,2025-01-01,0,7,0,0\n")
@@ -147,17 +191,13 @@ class AggregatorTests(unittest.TestCase):
         self.assertEqual(aggregator.rounded_ratio(Fraction(1, 3), 4), "0.3333")
         self.assertEqual(aggregator.rounded_ratio(Fraction(19999, 20000), 4), "1.0000")
 
-    def test_quoted_ids_round_trip(self):
-        for newline in ["\n", "\r\n"]:
+    def test_line_endings(self):
+        for newline in ["\n", "\r\n", "\r"]:
             with self.subTest(newline=newline):
-                campaign = f'comma, quote" and{newline}newline'
-                buffer = io.StringIO(newline="")
-                writer = csv.writer(buffer)
-                writer.writerow(aggregator.INPUT_COLUMNS)
-                writer.writerow([campaign, "2025-01-01", 100, 10, "1.25", 2])
-                result = self.parse(buffer.getvalue())
-                aggregator.write_reports(result.campaigns, self.output)
-                self.assertEqual(self.read_report("top10_ctr.csv")[1][0], campaign)
+                text = (HEADER + VALID_ROW + VALID_ROW).replace("\n", newline)
+                result = self.parse(text)
+                self.assertEqual(result.row_count, 2)
+                self.assertEqual(result.campaigns["A"].conversions, 4)
 
     def test_invalid_headers(self):
         headers = [
@@ -190,9 +230,81 @@ class AggregatorTests(unittest.TestCase):
             with self.subTest(spend=spend), self.assertRaisesRegex(ValueError, "line 2:.*spend"):
                 self.parse(HEADER + f"A,2025-01-01,100,10,{spend},2\n")
 
-    def test_malformed_csv(self):
-        with self.assertRaisesRegex(ValueError, "line 2"):
-            self.parse(HEADER + '"unterminated,2025-01-01,100,10,1.25,2\n')
+    def test_quoted_fields_are_rejected(self):
+        examples = [
+            ('"campaign_id",date,impressions,clicks,spend,conversions\n', "line 1"),
+            (HEADER + '"A",2025-01-01,100,10,1.25,2\n', "line 2"),
+            (HEADER + VALID_ROW + '"unterminated,2025-01-01,100,10,1.25,2\n', "line 3"),
+        ]
+        for text, line in examples:
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, line + ": quoted"):
+                self.parse(text)
+
+    def parallel_input(self, newline="\n"):
+        rows = [
+            f" C{index % 7} ,2025-01-{index % 28 + 1:02d},{index * 3},{index},{index}.0{index % 10},{index % 4}"
+            for index in range(1, 400)
+        ]
+        rows[50:50] = ["", ""]  # blank records
+        text = "﻿" + HEADER + "\n".join(rows) + "\n"
+        return text.replace("\n", newline)
+
+    def test_parallel_ranges_match_sequential(self):
+        for newline in ["\n", "\r\n"]:
+            for workers in [2, 3, 6, 50]:
+                with self.subTest(newline=newline, workers=workers):
+                    self.parse(self.parallel_input(newline))
+                    parallel = aggregator._aggregate_parallel(self.input, workers)
+                    self.assertIsNotNone(parallel)
+                    self.assertEqual(parallel, aggregator._aggregate_sequential(self.input))
+
+    def test_range_worker_handles_lines_longer_than_a_block(self):
+        text = self.parallel_input("\r\n").replace("C3 ", "C3" + " " * 40)
+        self.parse(text)
+        expected = aggregator._aggregate_sequential(self.input)
+        start = len(("﻿" + HEADER).encode())
+        end = self.input.stat().st_size
+        indexes = list(range(len(aggregator.INPUT_COLUMNS)))
+        for block in [1, 7, 64, 4096]:
+            with self.subTest(block=block), patch.object(aggregator, "BLOCK_BYTES", block):
+                campaigns, row_count = aggregator._aggregate_range(self.input, start, end, indexes)
+                self.assertEqual(aggregator.Aggregation(campaigns, row_count), expected)
+
+    def test_concurrent_parallel_calls_do_not_share_data(self):
+        inputs = [self.directory / "lf.csv", self.directory / "crlf.csv"]
+        inputs[0].write_text(self.parallel_input(), encoding="utf-8", newline="")
+        inputs[1].write_text(self.parallel_input("\r\n") + "Z,2025-01-01,9,9,9.99,9\r\n",
+                             encoding="utf-8", newline="")
+        expected = [aggregator._aggregate_sequential(path) for path in inputs]
+        self.assertNotEqual(expected[0], expected[1])
+        with patch.object(aggregator, "PARALLEL_MIN_BYTES", 0), ThreadPoolExecutor(8) as pool:
+            results = list(pool.map(
+                lambda index: aggregator.aggregate(inputs[index % 2], workers=3), range(8)
+            ))
+        for index, result in enumerate(results):
+            self.assertEqual(result, expected[index % 2])
+        self.assertEqual(len({id(totals) for result in results for totals in result.campaigns.values()}),
+                         sum(len(result.campaigns) for result in results))
+
+    def test_parallel_falls_back_to_sequential_semantics(self):
+        examples = {
+            "error line": self.parallel_input() + "A,2025-02-30,1,1,1,1\n",
+            "quote": self.parallel_input() + '"A",2025-01-01,1,1,1,1\n',
+            "bare carriage return": self.parallel_input() + VALID_ROW.replace("\n", "\r") + VALID_ROW,
+            "bad header": "campaign_id\n" + self.parallel_input(),
+            "invalid encoding": self.parallel_input() + "\udcff",
+        }
+        for name, text in examples.items():
+            with self.subTest(name), patch.object(aggregator, "PARALLEL_MIN_BYTES", 0):
+                self.input.write_bytes(text.encode("utf-8", "surrogateescape"))
+                self.assertIsNone(aggregator._aggregate_parallel(self.input, 3))
+                try:
+                    expected = aggregator._aggregate_sequential(self.input)
+                except ValueError as error:
+                    with self.assertRaisesRegex(ValueError, f"^{re.escape(str(error))}$"):
+                        aggregator.aggregate(self.input, workers=3)
+                else:
+                    self.assertEqual(aggregator.aggregate(self.input, workers=3), expected)
 
     def test_invalid_encoding_exits_without_traceback(self):
         self.input.write_bytes(HEADER.encode() + b"\xff")

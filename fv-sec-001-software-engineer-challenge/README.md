@@ -180,6 +180,12 @@ not been downloaded. See [SOLUTION.md](SOLUTION.md) for setup details, validatio
 and rounding policies, complexity, sample results, and measured full-dataset
 processing time and memory. The two output reports are in [results/](results/).
 
-Measured on the supplied 1,043,304,870-byte dataset: **26,843,544 records**, **50
+Original baseline measured before the date-cache optimization on the supplied
+1,043,304,870-byte dataset: **26,843,544 records**, **50
 campaigns**, **104.581 seconds**, and **24.30 MiB peak working set** (Windows 11,
 Python 3.15.2 64-bit). See the [benchmark log](benchmark-full.txt).
+
+With bounded date caching and streamlined row parsing, three full-data runs had
+a **median of 81.336 seconds** and **24.78 MiB peak working set**, compared with
+113.077 seconds and 24.65 MiB for three contemporaneous baseline runs. All six
+runs produced the same reports. See the [comparison log](benchmark-latency-comparison.txt).

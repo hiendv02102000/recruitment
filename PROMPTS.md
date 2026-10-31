@@ -101,3 +101,59 @@ current 'The full dataset completed in 171.95 seconds, using 30.13 MiB peak memo
 ````text
 commit
 ````
+
+## Prompt 7
+
+````text
+Find solutions to reduce latency
+````
+
+## Prompt 8
+
+````text
+implement
+````
+
+## Prompt 9
+
+````text
+commit
+````
+## Prompt 10
+
+````text
+write script read csv streaming for record latency read file and recommend optimize
+````
+
+## Prompt 11
+
+````text
+use split(",") instead of csv.reader
+````
+
+## Prompt 12
+
+````text
+it faster or slower
+````
+
+
+## Prompt 14
+
+````text
+Try using `split` for parallel processing; if it doesn't result in better speed, skip it.
+````
+
+## Prompt 15
+
+````text
+Ensure thread safe for the data, and verify the results.
+````
+
+
+
+## Prompt 16
+
+````text
+commit
+````
