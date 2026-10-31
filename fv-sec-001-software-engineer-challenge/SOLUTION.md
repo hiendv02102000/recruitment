@@ -87,9 +87,9 @@ Both reports have the columns `campaign_id`, `total_impressions`, `total_clicks`
   minimum of two decimal places. Counts use Python integers.
 - Calculate CTR from summed clicks / summed impressions and CPA from summed
   spend / summed conversions. Compare exact fractions for ranking before
-  rounding; ties use campaign ID ascending. Display CTR to four decimals and
+  rounding; ties use campaign ID ascending. Display CTR to six decimals and
   CPA to two with half-up rounding. CTR is a ratio, rather than a percentage.
-- Zero impressions produce CTR `0.0000`. Zero conversions produce a blank CPA
+- Zero impressions produce CTR `0.000000`. Zero conversions produce a blank CPA
   cell and exclude the campaign from the CPA report. Fewer than 10 campaigns
   produce fewer than 10 rows. A header-only CSV produces two header-only reports;
   a completely empty file is an error.
@@ -133,7 +133,7 @@ python aggregator.py --input tests/fixtures/example.csv --output results/manual-
 
 Expected CTR order: `CMP001`, `CMP002`, `CMP003`. Expected CPA order:
 `CMP001`, `CMP003`, `CMP002`. For `CMP001`, totals are 26000 impressions,
-640 clicks, 93.70 spend, and 27 conversions; CTR is `0.0246`, CPA is `3.47`.
+640 clicks, 93.70 spend, and 27 conversions; CTR is `0.024615`, CPA is `3.47`.
 Complete human acceptance scenarios and verification evidence are in the
 [task record](../docs/tasks/csv-aggregator.md).
 
@@ -186,8 +186,9 @@ The command output is preserved in [benchmark-full.txt](benchmark-full.txt).
 All 34 automated tests pass. An additional independent full-dataset calculation
 uses integer cents to check every emitted total, metric, and ranking; its command
 and result are recorded in the [task record](../docs/tasks/csv-aggregator.md).
-The supplied CTR report's ten displayed values all round to `0.0275`; ordering
-uses the underlying ratios calculated from the integer totals.
+At the time of this historical benchmark, all ten CTR values displayed as
+`0.0275` at four decimal places. Current reports use six decimal places; ordering
+continues to use the underlying ratios calculated from the integer totals.
 
 ### Optimized implementation comparison
 
@@ -229,4 +230,5 @@ memory for six workers. Smaller blocks cut memory without slowing it down.
 An independent reference written in `awk` (no production code) summed every
 record in integer cents. A separate checker ranked those totals and confirmed
 that all values and the campaign order in both reports match, and that they
-match the committed [results](results/) reports.
+matched the reports committed at the time. Current [results](results/) use the
+newer six-decimal CTR formatting.

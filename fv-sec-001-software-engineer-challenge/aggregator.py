@@ -307,7 +307,7 @@ def report_row(campaign_id: str, totals: CampaignTotals) -> tuple:
     spend_text = whole + "." + decimals.ljust(2, "0")
     return (
         campaign_id, totals.impressions, totals.clicks, spend_text, totals.conversions,
-        rounded_ratio(ctr(totals), 4),
+        rounded_ratio(ctr(totals), 6),
         rounded_ratio(Fraction(totals.spend) / totals.conversions, 2)
         if totals.conversions else "",
     )

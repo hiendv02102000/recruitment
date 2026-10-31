@@ -112,9 +112,9 @@ class AggregatorTests(unittest.TestCase):
         self.assertIn("5 records across 3 campaigns", completed.stdout)
         self.assertEqual(completed.stderr, "")
         header = list(aggregator.OUTPUT_COLUMNS)
-        one = ["CMP001", "26000", "640", "93.70", "27", "0.0246", "3.47"]
-        two = ["CMP002", "16500", "270", "59.00", "9", "0.0164", "6.56"]
-        three = ["CMP003", "5000", "60", "15.00", "3", "0.0120", "5.00"]
+        one = ["CMP001", "26000", "640", "93.70", "27", "0.024615", "3.47"]
+        two = ["CMP002", "16500", "270", "59.00", "9", "0.016364", "6.56"]
+        three = ["CMP003", "5000", "60", "15.00", "3", "0.012000", "5.00"]
         self.assertEqual(self.read_report("top10_ctr.csv"), [header, one, two, three])
         self.assertEqual(self.read_report("top10_cpa.csv"), [header, one, three, two])
 
@@ -171,7 +171,7 @@ class AggregatorTests(unittest.TestCase):
     def test_zero_denominators_and_no_eligible_cpa(self):
         result = self.parse(HEADER + "ZERO,2025-01-01,0,7,0,0\n")
         aggregator.write_reports(result.campaigns, self.output)
-        self.assertEqual(self.read_report("top10_ctr.csv")[1], ["ZERO", "0", "7", "0.00", "0", "0.0000", ""])
+        self.assertEqual(self.read_report("top10_ctr.csv")[1], ["ZERO", "0", "7", "0.00", "0", "0.000000", ""])
         self.assertEqual(self.read_report("top10_cpa.csv"), [list(aggregator.OUTPUT_COLUMNS)])
 
     def test_zero_conversions_excluded_only_from_cpa(self):
@@ -202,11 +202,13 @@ class AggregatorTests(unittest.TestCase):
 
     def test_sorting_uses_unrounded_ratios(self):
         result = self.parse(
-            HEADER + "A,2025-01-01,1000000,10000,1.004,1\n"
-            + "Z,2025-01-01,1000000,10001,1.003,1\n"
+            HEADER + "A,2025-01-01,10000000,100000,1.004,1\n"
+            + "Z,2025-01-01,10000000,100001,1.003,1\n"
         )
         for ranking in aggregator.top_campaigns(result.campaigns):
             self.assertEqual([key for key, _ in ranking], ["Z", "A"])
+        self.assertEqual(aggregator.report_row("A", result.campaigns["A"])[5], "0.010000")
+        self.assertEqual(aggregator.report_row("Z", result.campaigns["Z"])[5], "0.010000")
 
     def test_sorting_does_not_lose_precision_for_large_integers(self):
         big = 10 ** 40
@@ -245,6 +247,9 @@ class AggregatorTests(unittest.TestCase):
         self.assertEqual(aggregator.rounded_ratio(Fraction(201, 200), 2), "1.01")
         self.assertEqual(aggregator.rounded_ratio(Fraction(1, 3), 4), "0.3333")
         self.assertEqual(aggregator.rounded_ratio(Fraction(19999, 20000), 4), "1.0000")
+        self.assertEqual(aggregator.rounded_ratio(Fraction(1, 2000000), 6), "0.000001")
+        self.assertEqual(aggregator.rounded_ratio(Fraction(1, 4000000), 6), "0.000000")
+        self.assertEqual(aggregator.rounded_ratio(Fraction(1999999, 2000000), 6), "1.000000")
 
     def test_line_endings(self):
         for newline in ["\n", "\r\n", "\r"]:
@@ -469,7 +474,7 @@ class AggregatorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(sorted(path.name for path in self.output.iterdir()), sorted(aggregator.REPORT_NAMES))
         for name in aggregator.REPORT_NAMES:
-            self.assertEqual(self.read_report(name)[1], ["A", "100", "10", "1.25", "2", "0.1000", "0.63"])
+            self.assertEqual(self.read_report(name)[1], ["A", "100", "10", "1.25", "2", "0.100000", "0.63"])
 
     def test_default_output_directory(self):
         self.input.write_text(HEADER + VALID_ROW, encoding="utf-8")
