@@ -1,8 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
 import csv
 from datetime import date, timedelta
 from decimal import Decimal, localcontext
 from fractions import Fraction
+import io
 from pathlib import Path
 import re
 import subprocess
@@ -42,6 +44,59 @@ class AggregatorTests(unittest.TestCase):
     def read_report(self, name):
         with (self.output / name).open(encoding="utf-8", newline="") as source:
             return list(csv.reader(source))
+
+    def test_default_and_explicit_worker_counts(self):
+        self.input.write_text(HEADER + VALID_ROW, encoding="utf-8")
+        expected = aggregator.Aggregation()
+        with patch.object(aggregator, "PARALLEL_MIN_BYTES", 0), \
+             patch.object(aggregator, "_aggregate_parallel", return_value=expected) as parallel:
+            self.assertIs(aggregator.aggregate(self.input), expected)
+            parallel.assert_called_once_with(self.input, 4)
+            parallel.reset_mock()
+            self.assertIs(aggregator.aggregate(self.input, workers=2), expected)
+            parallel.assert_called_once_with(self.input, 2)
+            parallel.reset_mock()
+            self.assertEqual(aggregator.aggregate(self.input, workers=1).row_count, 1)
+            parallel.assert_not_called()
+
+    def test_small_input_uses_sequential_path_by_default(self):
+        self.input.write_text(HEADER + VALID_ROW, encoding="utf-8")
+        with patch.object(aggregator, "_aggregate_parallel") as parallel:
+            self.assertEqual(aggregator.aggregate(self.input).row_count, 1)
+            parallel.assert_not_called()
+
+    def test_cli_passes_default_and_explicit_workers_to_aggregate(self):
+        self.input.write_text(HEADER + VALID_ROW, encoding="utf-8")
+        for arguments, expected_workers in [([], 4), (["--workers", "12"], 12)]:
+            with self.subTest(arguments=arguments), \
+                 patch.object(aggregator, "aggregate", return_value=aggregator.Aggregation()) as aggregate, \
+                 patch.object(aggregator, "write_reports"), redirect_stdout(io.StringIO()):
+                self.assertEqual(aggregator.main([
+                    "--input", str(self.input), "--output", str(self.output), *arguments
+                ]), 0)
+                aggregate.assert_called_once_with(self.input, workers=expected_workers)
+
+    def test_cli_worker_options_produce_expected_reports(self):
+        for count in (1, 12):
+            with self.subTest(workers=count):
+                completed = self.cli(HERE / "fixtures" / "example.csv", None, "--workers", str(count))
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("5 records across 3 campaigns", completed.stdout)
+                self.assertEqual([row[0] for row in self.read_report("top10_ctr.csv")[1:]],
+                                 ["CMP001", "CMP002", "CMP003"])
+                self.assertEqual([row[0] for row in self.read_report("top10_cpa.csv")[1:]],
+                                 ["CMP001", "CMP003", "CMP002"])
+
+    def test_cli_rejects_invalid_worker_counts(self):
+        self.input.write_text(HEADER + VALID_ROW, encoding="utf-8")
+        for arguments in (["--workers", "0"], ["--workers", "-1"],
+                          ["--workers", "abc"], ["--workers", "1.5"], ["--workers"]):
+            with self.subTest(arguments=arguments):
+                completed = self.cli(None, None, *arguments)
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("--workers", completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
+                self.assertFalse(self.output.exists())
 
     def test_example_totals(self):
         result = aggregator.aggregate(HERE / "fixtures" / "example.csv")

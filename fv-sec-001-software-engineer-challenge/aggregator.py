@@ -27,6 +27,7 @@ OUTPUT_COLUMNS = (
     "total_conversions", "CTR", "CPA",
 )
 REPORT_NAMES = ("top10_ctr.csv", "top10_cpa.csv")
+DEFAULT_WORKERS = 4
 # Smaller inputs are not worth the worker start-up cost.
 PARALLEL_MIN_BYTES = 64 * 1024 * 1024
 BLOCK_BYTES = 1024 * 1024
@@ -161,8 +162,7 @@ def aggregate(input_path: Path, workers: int | None = None) -> Aggregation:
     sequential path, which also produces the authoritative error message.
     """
     if workers is None:
-        # os.process_cpu_count respects CPU affinity but needs Python 3.13.
-        workers = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+        workers = DEFAULT_WORKERS
     try:
         size = input_path.stat().st_size
     except OSError:
@@ -336,16 +336,28 @@ def write_reports(campaigns: dict[str, CampaignTotals], output_dir: Path) -> Non
             temporary.unlink(missing_ok=True)
 
 
+def positive_worker_count(value: str) -> int:
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if count < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return count
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True, help="UTF-8 advertising CSV")
     parser.add_argument("--output", type=Path, default=Path("results"), help="report directory (default: results)")
+    parser.add_argument("--workers", type=positive_worker_count, default=DEFAULT_WORKERS,
+                        help=f"worker processes for large inputs (default: {DEFAULT_WORKERS})")
     args = parser.parse_args(argv)
     start = perf_counter()
     try:
         if any(args.input.resolve() == (args.output / name).resolve() for name in REPORT_NAMES):
             raise ValueError("input must not be one of the output report paths")
-        result = aggregate(args.input)
+        result = aggregate(args.input, workers=args.workers)
         write_reports(result.campaigns, args.output)
     except (OSError, ValueError, UnicodeError) as error:
         parser.exit(1, f"Error: {error}\n")

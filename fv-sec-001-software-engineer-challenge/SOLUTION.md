@@ -31,6 +31,17 @@ required; `--output` defaults to `results`. Missing output directories are
 created automatically. The CLI prints the number of input records, distinct
 campaigns, output paths, and processing time. `--help` shows usage.
 
+The default is four workers. To choose a different positive worker count:
+
+```powershell
+python aggregator.py --input ad_data.csv --output results --workers 12
+```
+
+`--workers 1` uses sequential processing. Inputs smaller than 64 MiB also use
+the sequential path, regardless of the configured worker count. On Windows,
+the process pool supports at most 61 workers; if the pool cannot be created,
+the aggregator falls back to sequential processing.
+
 The [results directory](results/) contains the full-dataset reports:
 
 - `top10_ctr.csv`: at most 10 campaigns, highest CTR first.
@@ -47,8 +58,10 @@ Both reports have the columns `campaign_id`, `total_impressions`, `total_clicks`
   top 10 uses a bounded heap, so it does not sort all campaigns or keep all
   input records. A very large number of distinct campaigns can still use
   substantial memory.
-- Inputs of 64 MiB or more are split into newline-aligned byte ranges, one per
-  available CPU, and aggregated by worker processes in bounded 1 MiB blocks.
+- Inputs of 64 MiB or more are split into newline-aligned byte ranges and
+  aggregated by up to four worker processes by default, in bounded 1 MiB blocks.
+  Python callers can override the count with `aggregate(path, workers=N)`;
+  smaller inputs and calls with one worker use the sequential path.
   This is possible because quoted (possibly multiline) fields are rejected.
   Workers share no mutable state: each opens its own file handle and returns
   its own totals, which the calling thread merges after all workers finish.
@@ -58,6 +71,11 @@ Both reports have the columns `campaign_id`, `total_impressions`, `total_clicks`
   row, a quote, a bare carriage return, invalid UTF-8, a crashed worker), it
   discards its partial work and reruns the sequential reader, which produces
   the authoritative result or line-numbered error.
+- On the local Windows machine (12 available logical CPUs, Python 3.15.2), two
+  full-dataset runs averaged 25.05 seconds with four workers and 17.07 seconds
+  with twelve. The fixed default limits processes but is slower on that machine;
+  the best count depends on the environment. These timings include report
+  writing and do not measure the workers' combined memory usage.
 - Cache successful canonical-date validations in a bounded 4096-entry LRU
   cache. Invalid dates still fail, and repeated values reuse validation across
   calls. Fields are stripped once before count parsing; Decimal spend handling

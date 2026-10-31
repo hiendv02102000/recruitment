@@ -157,3 +157,10 @@ Ensure thread safe for the data, and verify the results.
 ````text
 commit
 ````
+
+## Prompts 17
+
+````text
+Configure the CSV aggregator to use 4 workers by default and allow the worker count to be specified as a command-line argument.
+````
+
