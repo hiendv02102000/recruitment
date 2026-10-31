@@ -285,6 +285,20 @@ class AggregatorTests(unittest.TestCase):
             with self.subTest(spend=spend), self.assertRaisesRegex(ValueError, "line 2:.*spend"):
                 self.parse(HEADER + f"A,2025-01-01,100,10,{spend},2\n")
 
+    def test_count_fast_path_keeps_validation_and_error_order(self):
+        fields = ["A", "2025-01-01", "00100", "010", "1.25", "002"]
+        result = self.parse(HEADER + ",".join(fields) + "\n")
+        self.assertEqual(result.campaigns["A"], aggregator.CampaignTotals(100, 10, Decimal("1.25"), 2))
+        for index, column in [(2, "impressions"), (3, "clicks"), (5, "conversions")]:
+            for value in ["", "-1", "+1", "1.5", "1_000", "１００"]:
+                row = fields.copy()
+                row[index] = value
+                with self.subTest(column=column, value=value), \
+                     self.assertRaisesRegex(ValueError, "line 2:.*" + column):
+                    self.parse(HEADER + ",".join(row) + "\n")
+        with self.assertRaisesRegex(ValueError, "line 2:.*spend"):
+            self.parse(HEADER + "A,2025-01-01,1,1,bad,-1\n")
+
     def test_quoted_fields_are_rejected(self):
         examples = [
             ('"campaign_id",date,impressions,clicks,spend,conversions\n', "line 1"),
@@ -344,6 +358,7 @@ class AggregatorTests(unittest.TestCase):
     def test_parallel_falls_back_to_sequential_semantics(self):
         examples = {
             "error line": self.parallel_input() + "A,2025-02-30,1,1,1,1\n",
+            "invalid spend and count": self.parallel_input() + "A,2025-01-01,1,1,bad,-1\n",
             "quote": self.parallel_input() + '"A",2025-01-01,1,1,1,1\n',
             "bare carriage return": self.parallel_input() + VALID_ROW.replace("\n", "\r") + VALID_ROW,
             "bad header": "campaign_id\n" + self.parallel_input(),

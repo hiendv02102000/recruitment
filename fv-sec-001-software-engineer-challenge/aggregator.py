@@ -135,10 +135,14 @@ def accumulate(lines, first_line: int, indexes: list[int],
                 validate_date(day)
             except ValueError:
                 raise ValueError("date must be a valid YYYY-MM-DD calendar date") from None
-            impressions = _nonnegative_integer(raw_impressions, "impressions")
-            clicks = _nonnegative_integer(raw_clicks, "clicks")
+            # Avoid a Python helper call for valid counts; retain its error path.
+            impressions = (int(raw_impressions) if raw_impressions.isascii() and raw_impressions.isdecimal()
+                           else _nonnegative_integer(raw_impressions, "impressions"))
+            clicks = (int(raw_clicks) if raw_clicks.isascii() and raw_clicks.isdecimal()
+                      else _nonnegative_integer(raw_clicks, "clicks"))
             spend = decimal_spend(raw_spend)
-            conversions = _nonnegative_integer(raw_conversions, "conversions")
+            conversions = (int(raw_conversions) if raw_conversions.isascii() and raw_conversions.isdecimal()
+                           else _nonnegative_integer(raw_conversions, "conversions"))
 
             totals = campaigns.get(campaign_id)
             if totals is None:

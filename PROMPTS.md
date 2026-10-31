@@ -164,3 +164,9 @@ commit
 Configure the CSV aggregator to use 4 workers by default and allow the worker count to be specified as a command-line argument.
 ````
 
+## Prompt 18
+
+````text
+can be optimized ?
+````
+

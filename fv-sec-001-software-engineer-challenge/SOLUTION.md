@@ -79,7 +79,9 @@ Both reports have the columns `campaign_id`, `total_impressions`, `total_clicks`
 - Cache successful canonical-date validations in a bounded 4096-entry LRU
   cache. Invalid dates still fail, and repeated values reuse validation across
   calls. Fields are stripped once before count parsing; Decimal spend handling
-  and the public integer helper retain their existing behavior.
+  and the public integer helper retain their existing behavior. Valid ASCII
+  integer counts are parsed directly to avoid a helper call per field; invalid
+  counts use the helper so error messages and validation order remain unchanged.
 - Sum spend with `Decimal`, increasing arithmetic precision when necessary
   to preserve exact sums. Preserve total spend's decimal precision, with a
   minimum of two decimal places. Counts use Python integers.
@@ -150,6 +152,23 @@ Python and the helper itself. Other platforms report timing and explicitly
 mark memory as unmeasured. Archive extraction is outside the measurement.
 This is a single local run; hardware, filesystem cache, interpreter version,
 and data cardinality affect the result.
+
+### Count-parsing optimization
+
+On the same local Windows 11 / Python 3.15.2 host, isolated copies of the
+previous implementation and the count-parsing optimization ran alternately on
+the full 1,043,304,870-byte dataset. Both processed 26,843,544 records and
+produced reports matching the expected hashes after line-ending normalization.
+CLI processing time includes report writing; combined worker memory was not
+measured.
+
+| Workers | Previous runs (seconds) | Optimized runs (seconds) | Comparison |
+| --- | --- | --- | --- |
+| 4 | 27.46, 30.82 | 23.99, 24.85 | Mean 29.14 vs 24.42 |
+| 12 | 20.68, 17.06, 16.60, 17.01, 17.03 | 23.29, 16.91, 16.26, 16.91, 16.40 | Median 17.03 vs 16.91 |
+
+Times varied substantially, especially at 12 workers, so these measurements
+do not guarantee a similar improvement on another host or run.
 
 Original single-pass baseline measured on 2026-10-30, before the date-cache
 optimization, using the provided extracted dataset:
